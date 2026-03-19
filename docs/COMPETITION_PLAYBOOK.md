@@ -59,6 +59,22 @@ All env-configurable now:
 
 These are logged in `quant_cfg:` in each run log for reproducibility.
 
+## Significance check helper
+
+Use the new script to verify the challenge gate (>=0.005 nats and p<0.01):
+
+```bash
+python scripts/significance_check.py \
+  --baseline 'logs/baseline_*.txt' \
+  --candidate 'logs/cand_best_*.txt'
+```
+
+## Monitoring cadence
+
+- Every 2 hours: leaderboard watch + PR status watch.
+- Every 8 hours: consolidated progress summary to Mark (what changed, best metrics, blockers, next plan).
+- Immediate alert when leaderboard top score changes or when a run clears internal submit gates.
+
 ## Submission checklist
 
 - [ ] Improvement threshold met with significance requirement
