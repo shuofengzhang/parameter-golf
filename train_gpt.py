@@ -301,10 +301,34 @@ INT8_KEEP_FLOAT_FP32_NAME_PATTERNS = tuple(
     ).split(",")
     if pattern
 )
-INT8_KEEP_FLOAT_MAX_NUMEL = 65_536
-INT8_KEEP_FLOAT_STORE_DTYPE = torch.float16
-INT8_PER_ROW_SCALE_DTYPE = torch.float16
-INT8_CLIP_PERCENTILE = 99.99984
+
+
+def _env_torch_dtype(name: str, default: torch.dtype) -> torch.dtype:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    key = raw.strip().lower().replace("torch.", "")
+    mapping = {
+        "fp16": torch.float16,
+        "float16": torch.float16,
+        "half": torch.float16,
+        "bf16": torch.bfloat16,
+        "bfloat16": torch.bfloat16,
+        "fp32": torch.float32,
+        "float32": torch.float32,
+    }
+    if key not in mapping:
+        raise ValueError(f"{name} must be one of {sorted(mapping)}, got: {raw}")
+    return mapping[key]
+
+
+INT8_KEEP_FLOAT_MAX_NUMEL = int(os.environ.get("INT8_KEEP_FLOAT_MAX_NUMEL", 65_536))
+INT8_KEEP_FLOAT_STORE_DTYPE = _env_torch_dtype("INT8_KEEP_FLOAT_STORE_DTYPE", torch.float16)
+INT8_PER_ROW_SCALE_DTYPE = _env_torch_dtype("INT8_PER_ROW_SCALE_DTYPE", torch.float16)
+INT8_PER_TENSOR_SCALE_DTYPE = _env_torch_dtype("INT8_PER_TENSOR_SCALE_DTYPE", torch.float32)
+INT8_CLIP_PERCENTILE = float(os.environ.get("INT8_CLIP_PERCENTILE", 99.99984))
+if not (90.0 <= INT8_CLIP_PERCENTILE <= 100.0):
+    raise ValueError(f"INT8_CLIP_PERCENTILE must be in [90, 100], got {INT8_CLIP_PERCENTILE}")
 INT8_CLIP_Q = INT8_CLIP_PERCENTILE / 100.0
 
 def tensor_nbytes(t: Tensor) -> int:
@@ -337,7 +361,7 @@ def quantize_float_tensor(t: Tensor) -> tuple[Tensor, Tensor]:
     clip_abs = float(torch.quantile(t32.abs().flatten(), INT8_CLIP_Q).item()) if t32.numel() else 0.0
     scale = torch.tensor(clip_abs / 127.0 if clip_abs > 0 else 1.0, dtype=torch.float32)
     q = torch.clamp(torch.round(torch.clamp(t32, -clip_abs, clip_abs) / scale), -127, 127).to(torch.int8).contiguous()
-    return q, scale
+    return q, scale.to(dtype=INT8_PER_TENSOR_SCALE_DTYPE).contiguous()
 
 def quantize_state_dict_int8(state_dict: dict[str, Tensor]):
     # Single supported clean-script export format:
@@ -818,6 +842,14 @@ def main() -> None:
     log0(f"val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path={args.tokenizer_path}")
     log0(f"train_loader:dataset:{dataset_dir.name} train_shards:{actual_train_files}")
     log0(f"val_loader:shards pattern={args.val_files} tokens:{val_tokens.numel() - 1}")
+    log0(
+        "quant_cfg:"
+        f" clip_pct={INT8_CLIP_PERCENTILE}"
+        f" keep_float_max_numel={INT8_KEEP_FLOAT_MAX_NUMEL}"
+        f" keep_float_dtype={str(INT8_KEEP_FLOAT_STORE_DTYPE).removeprefix('torch.')}"
+        f" per_row_scale_dtype={str(INT8_PER_ROW_SCALE_DTYPE).removeprefix('torch.')}"
+        f" per_tensor_scale_dtype={str(INT8_PER_TENSOR_SCALE_DTYPE).removeprefix('torch.')}"
+    )
 
     # -----------------------------
     # MODEL + OPTIMIZER SETUP
