@@ -38,9 +38,16 @@ def _extract_ssh_hint(pod: dict) -> str | None:
     return None
 
 
+def _normalize_pods(raw) -> list[dict]:
+    if isinstance(raw, list):
+        return [p for p in raw if isinstance(p, dict)]
+    if isinstance(raw, dict):
+        return [p for p in raw.get("myself", {}).get("pods", []) if isinstance(p, dict)]
+    return []
+
+
 def _find_pod_by_id(runpod, pod_id: str) -> dict | None:
-    pods = runpod.get_pods() or {}
-    items = pods.get("myself", {}).get("pods", [])
+    items = _normalize_pods(runpod.get_pods() or [])
     for p in items:
         if p.get("id") == pod_id:
             return p
@@ -52,12 +59,14 @@ def main() -> int:
     ap.add_argument("--template-id", default="y5cejece4j", help="Runpod template id")
     ap.add_argument("--name", default=None, help="Pod name")
     ap.add_argument("--gpu-count", type=int, default=1)
+    ap.add_argument("--gpu-type-id", default="NVIDIA A100 80GB PCIe", help="Runpod GPU type id (e.g. 'NVIDIA H100 80GB HBM3')")
     ap.add_argument("--volume-gb", type=int, default=80)
     ap.add_argument("--container-disk-gb", type=int, default=80)
     ap.add_argument("--cloud-type", default="ALL", choices=["ALL", "SECURE", "COMMUNITY"])
     ap.add_argument("--reuse-id", default=None, help="Reuse an existing pod id instead of creating")
     ap.add_argument("--wait-seconds", type=int, default=600)
     ap.add_argument("--poll-seconds", type=int, default=10)
+    ap.add_argument("--public-key-file", default=None, help="Optional SSH public key file to inject as PUBLIC_KEY")
     ap.add_argument("--json", action="store_true", help="Print final object as JSON")
     args = ap.parse_args()
 
@@ -77,9 +86,32 @@ def main() -> int:
         created = False
     else:
         name = args.name or f"parameter-golf-{args.gpu_count}x-{_utc_stamp()}"
+
+        public_key = None
+        key_candidates = []
+        if args.public_key_file:
+            key_candidates.append(args.public_key_file)
+        key_candidates.extend([
+            "~/.ssh/id_ed25519.pub",
+            "~/.ssh/id_rsa.pub",
+        ])
+        for raw in key_candidates:
+            p = os.path.expanduser(raw)
+            if os.path.exists(p):
+                try:
+                    val = open(p, "r", encoding="utf-8").read().strip()
+                    if val:
+                        public_key = val
+                        break
+                except Exception:
+                    pass
+
+        env = {"PUBLIC_KEY": public_key} if public_key else None
+
         created_pod = runpod.create_pod(
             name=name,
             image_name="",
+            gpu_type_id=args.gpu_type_id,
             gpu_count=args.gpu_count,
             volume_in_gb=args.volume_gb,
             container_disk_in_gb=args.container_disk_gb,
@@ -87,6 +119,7 @@ def main() -> int:
             support_public_ip=True,
             start_ssh=True,
             template_id=args.template_id,
+            env=env,
         )
         pod_id = created_pod.get("id") or created_pod.get("podId")
         if not pod_id:
@@ -124,6 +157,7 @@ def main() -> int:
         "cost_per_hr": pod.get("costPerHr"),
         "gpu_count": pod.get("gpuCount"),
         "template_id": args.template_id,
+        "gpu_type_id": args.gpu_type_id,
         "ssh_hint": ssh_hint,
         "next": [
             "ssh into pod",
