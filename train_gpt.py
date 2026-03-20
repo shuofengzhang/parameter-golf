@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import glob
+import inspect
 import io
 import math
 import os
@@ -26,6 +27,12 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+
+try:
+    _SDPA_HAS_ENABLE_GQA = "enable_gqa" in inspect.signature(F.scaled_dot_product_attention).parameters
+except (ValueError, TypeError):
+    _SDPA_HAS_ENABLE_GQA = False
 
 # -----------------------------
 # HYPERPARAMETERS
@@ -615,14 +622,29 @@ class CausalSelfAttention(nn.Module):
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
-        y = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=None,
-            is_causal=True,
-            enable_gqa=(self.num_kv_heads != self.num_heads),
-        )
+        if self.num_kv_heads != self.num_heads and not _SDPA_HAS_ENABLE_GQA:
+            # Compatibility path for older torch builds where SDPA has no `enable_gqa` kwarg.
+            # Expand KV heads explicitly to match query heads.
+            gqa_ratio = self.num_heads // self.num_kv_heads
+            k = k.repeat_interleave(gqa_ratio, dim=1)
+            v = v.repeat_interleave(gqa_ratio, dim=1)
+            y = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=None,
+                is_causal=True,
+            )
+        else:
+            sdpa_kwargs = {"attn_mask": None, "is_causal": True}
+            if _SDPA_HAS_ENABLE_GQA:
+                sdpa_kwargs["enable_gqa"] = (self.num_kv_heads != self.num_heads)
+            y = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                **sdpa_kwargs,
+            )
         y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
         return self.proj(y)
 
