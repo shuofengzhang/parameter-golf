@@ -17,6 +17,16 @@ So optimize for post-quant performance first, not pre-quant loss alone.
 
 ## 48-hour runbook
 
+### Runpod launch helper (API-key mode)
+
+If you have `RUNPOD_API_KEY`, you can create/reuse a pod programmatically:
+
+```bash
+python scripts/runpod_start_campaign.py --gpu-count 1 --json
+# later for official track infra:
+# python scripts/runpod_start_campaign.py --gpu-count 8 --json
+```
+
 ### Stage A: baseline lock (3 runs)
 
 1. Reproduce baseline config with 3 seeds.
