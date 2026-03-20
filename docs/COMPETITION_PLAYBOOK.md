@@ -31,6 +31,14 @@ python scripts/sweep_quant.py --preset quant_v1 --seeds 1337
 python scripts/analyze_logs.py --glob 'logs/qsw_*.txt' --top 20
 ```
 
+Or run the whole first campaign in one command (baseline + quant sweep + ranking):
+
+```bash
+bash scripts/run_first_campaign.sh
+# 8xH100 example:
+# NPROC_PER_NODE=8 MAX_WALLCLOCK_SECONDS=600 bash scripts/run_first_campaign.sh
+```
+
 Promote top 2-3 configs to multi-seed validation:
 
 ```bash
